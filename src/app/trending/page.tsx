@@ -1649,7 +1649,7 @@ export default function TrendingPage() {
 
                     <p className="text-black text-sm mb-4">{product.description}</p>
 
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center mb-2">
                       <p className="text-black font-bold">
                         {product.minInvestment} 起投
                       </p>
@@ -1658,6 +1658,12 @@ export default function TrendingPage() {
                           参与事件
                         </button>
                       </Link>
+                    </div>
+                    
+                    {/* 关注数显示 */}
+                    <div className="flex items-center text-gray-500 text-sm">
+                      <Heart className="w-4 h-4 mr-1" />
+                      <span>{sortedEvents[i]?.followers_count || 0} 人关注</span>
                     </div>
                   </div>
                 </motion.div>
