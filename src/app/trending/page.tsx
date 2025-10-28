@@ -223,6 +223,19 @@ export default function TrendingPage() {
       return next;
     });
 
+    // 乐观更新关注数量
+    setSortedEvents(prev => {
+      const newEvents = [...prev];
+      const currentCount = newEvents[eventIndex]?.followers_count || 0;
+      if (newEvents[eventIndex]) {
+        newEvents[eventIndex] = {
+          ...newEvents[eventIndex],
+          followers_count: wasFollowing ? Math.max(0, currentCount - 1) : currentCount + 1
+        };
+      }
+      return newEvents;
+    });
+
     try {
       if (wasFollowing) {
         await unfollowPrediction(Number(predictionId), account);
@@ -241,6 +254,19 @@ export default function TrendingPage() {
           rollback.delete(pid);
         }
         return rollback;
+      });
+      
+      // 回滚关注数量
+      setSortedEvents(prev => {
+        const newEvents = [...prev];
+        const currentCount = newEvents[eventIndex]?.followers_count || 0;
+        if (newEvents[eventIndex]) {
+          newEvents[eventIndex] = {
+            ...newEvents[eventIndex],
+            followers_count: wasFollowing ? currentCount + 1 : Math.max(0, currentCount - 1)
+          };
+        }
+        return newEvents;
       });
     }
   };
