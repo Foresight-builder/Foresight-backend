@@ -48,3 +48,9 @@ next-env.d.ts
 # Local data files
 .data/
 *.db
+
+# Large binary files and git backups
+*.node
+*.pack
+.git-backup/
+.next-swc/
