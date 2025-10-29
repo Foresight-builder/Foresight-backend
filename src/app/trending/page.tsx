@@ -24,6 +24,7 @@ import TopNavBar from "@/components/TopNavBar";
 import Link from "next/link";
 import { useWallet } from "@/contexts/WalletContext";
 import { followPrediction, unfollowPrediction } from "@/lib/follows";
+import { supabase } from "@/lib/supabase";
 
 export default function TrendingPage() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -135,6 +136,11 @@ export default function TrendingPage() {
   // 关注功能状态管理
   const [followedEvents, setFollowedEvents] = useState<Set<number>>(new Set());
   const { account } = useWallet();
+  const accountNorm = account?.toLowerCase();
+  const [followError, setFollowError] = useState<string | null>(null);
+  // Realtime 订阅状态与过滤信息（用于可视化诊断）
+  const [rtStatus, setRtStatus] = useState<string>('INIT');
+  const [rtFilter, setRtFilter] = useState<string>('');
   
   // 返回顶部功能状态
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -195,7 +201,7 @@ export default function TrendingPage() {
 
   // 关注/取消关注事件（持久化到后端）
   const toggleFollow = async (eventIndex: number, event: React.MouseEvent) => {
-    if (!account) {
+    if (!accountNorm) {
       // 如果用户未连接钱包，显示登录提示弹窗
       setShowLoginModal(true);
       return;
@@ -223,14 +229,30 @@ export default function TrendingPage() {
       return next;
     });
 
+  // 乐观更新关注数量
+    setPredictions(prev => {
+      const next = [...prev];
+      const idx = next.findIndex(p => Number(p?.id) === Number(predictionId));
+      if (idx >= 0) {
+        const currentCount = Number(next[idx]?.followers_count || 0);
+        next[idx] = {
+          ...next[idx],
+          followers_count: wasFollowing ? Math.max(0, currentCount - 1) : currentCount + 1,
+        };
+      }
+      return next;
+    });
+
     try {
       if (wasFollowing) {
-        await unfollowPrediction(Number(predictionId), account);
+        await unfollowPrediction(Number(predictionId), accountNorm);
       } else {
-        await followPrediction(Number(predictionId), account);
+        await followPrediction(Number(predictionId), accountNorm);
       }
     } catch (err) {
       console.error('关注/取消关注失败:', err);
+      setFollowError((err as any)?.message ? String((err as any).message) : '关注操作失败，请稍后重试');
+      setTimeout(() => setFollowError(null), 3000);
       // 回滚本地状态（按事件ID回滚）
       setFollowedEvents(prev => {
         const rollback = new Set(prev);
@@ -241,6 +263,20 @@ export default function TrendingPage() {
           rollback.delete(pid);
         }
         return rollback;
+      });
+      
+      // 回滚关注数量
+      setPredictions(prev => {
+        const next = [...prev];
+        const idx = next.findIndex(p => Number(p?.id) === Number(predictionId));
+        if (idx >= 0) {
+          const currentCount = Number(next[idx]?.followers_count || 0);
+          next[idx] = {
+            ...next[idx],
+            followers_count: wasFollowing ? currentCount + 1 : Math.max(0, currentCount - 1),
+          };
+        }
+        return next;
       });
     }
   };
@@ -815,10 +851,10 @@ export default function TrendingPage() {
 
   // 同步服务器关注状态到本地心形按钮（保存为事件ID集合）
   useEffect(() => {
-    if (!account) return;
+    if (!accountNorm) return;
     (async () => {
       try {
-        const res = await fetch(`/api/user-follows?address=${account}`);
+        const res = await fetch(`/api/user-follows?address=${accountNorm}`);
         if (!res.ok) return;
         const data = await res.json();
         const ids = new Set<number>((data?.follows || []).map((e: any) => Number(e.id)));
@@ -827,7 +863,56 @@ export default function TrendingPage() {
         console.warn('同步关注状态失败:', err);
       }
     })();
-  }, [account]);
+  }, [accountNorm]);
+
+  // 订阅 Supabase Realtime：event_follows 的插入/删除，实时更新关注数与按钮状态
+  useEffect(() => {
+    const ids = Array.from(new Set((predictions || []).map(p => Number(p?.id)).filter(n => Number.isFinite(n))));
+    if (ids.length === 0) return;
+
+    const filterIn = `event_id=in.(${ids.join(',')})`;
+    const channel = supabase.channel('event_follows_trending');
+    setRtStatus('CONNECTING');
+    setRtFilter(filterIn);
+
+    channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_follows', filter: filterIn }, (payload: any) => {
+        const row = payload?.new || {};
+        const eid = Number(row?.event_id);
+        const uid = String(row?.user_id || '');
+        if (!Number.isFinite(eid)) return;
+
+        // 更新关注计数（跳过当前账户以避免与乐观更新重复计算）
+        if (!accountNorm || (uid || '').toLowerCase() !== accountNorm) {
+          setPredictions(prev => prev.map(p => p?.id === eid ? { ...p, followers_count: Number(p?.followers_count || 0) + 1 } : p));
+        }
+        // 如果是当前用户的行为，同步心形按钮状态（集合操作幂等）
+        if (accountNorm && (uid || '').toLowerCase() === accountNorm) {
+          setFollowedEvents(prev => { const s = new Set(prev); s.add(eid); return s; });
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'event_follows', filter: filterIn }, (payload: any) => {
+        const row = payload?.old || {};
+        const eid = Number(row?.event_id);
+        const uid = String(row?.user_id || '');
+        if (!Number.isFinite(eid)) return;
+
+        if (!accountNorm || (uid || '').toLowerCase() !== accountNorm) {
+          setPredictions(prev => prev.map(p => p?.id === eid ? { ...p, followers_count: Math.max(0, Number(p?.followers_count || 0) - 1) } : p));
+        }
+        if (accountNorm && (uid || '').toLowerCase() === accountNorm) {
+          setFollowedEvents(prev => { const s = new Set(prev); s.delete(eid); return s; });
+        }
+      })
+      .subscribe((status: string) => {
+        setRtStatus(status || 'UNKNOWN');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+      setRtStatus('CLOSED');
+    };
+  }, [predictions, accountNorm]);
 
   // 将预测事件转换为页面显示格式（包含事件ID以便关注映射）
   const allEvents = predictions.map(prediction => ({
@@ -843,16 +928,7 @@ export default function TrendingPage() {
   }));
 
   // 当分类计数接口不可用时，基于已加载的预测数据进行本地回退计算
-  useEffect(() => {
-    if (predictions.length > 0 && Object.keys(categoryCounts).length === 0) {
-      const counts: Record<string, number> = {};
-      for (const p of predictions) {
-        const cat = p.category || '未分类';
-        counts[cat] = (counts[cat] || 0) + 1;
-      }
-      setCategoryCounts(counts);
-    }
-  }, [predictions]);
+  // 本地回退逻辑已移除，分类计数仅依赖后端 /api/categories/counts
 
   // 搜索与类型筛选
   const q = searchQuery.toLowerCase().trim();
@@ -886,6 +962,14 @@ export default function TrendingPage() {
     return 0;
   });
 
+  const rtBadgeClass = rtStatus === 'SUBSCRIBED'
+    ? 'bg-green-100 text-green-700 border-green-300'
+    : (rtStatus === 'CHANNEL_ERROR' || rtStatus === 'CLOSED')
+    ? 'bg-red-100 text-red-700 border-red-300'
+    : (rtStatus === 'TIMED_OUT')
+    ? 'bg-yellow-100 text-yellow-700 border-yellow-300'
+    : 'bg-gray-100 text-gray-700 border-gray-300';
+
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-pink-100 via-purple-100 to-pink-50 overflow-hidden text-black">
       <canvas ref={canvasRef} className="absolute inset-0 z-0" />
@@ -893,6 +977,18 @@ export default function TrendingPage() {
 
       {/* 集成筛选栏 - 搜索、分类筛选、排序一体化 */}
       <div className={`relative z-10 px-16 ${sidebarCollapsed ? "ml-20" : "ml-80"} mt-6`}>
+        {/* Realtime 订阅状态指示（仅用于排查）*/}
+        <div className="flex justify-end mb-2">
+          <span className={`inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full border ${rtBadgeClass}`}>
+            <span className="font-semibold">Realtime:</span>
+            <span>{rtStatus}</span>
+            {rtFilter ? (
+              <span className="ml-1 text-[10px] text-gray-500" title={rtFilter}>
+                {rtFilter}
+              </span>
+            ) : null}
+          </span>
+        </div>
         {/* 搜索栏 */}
         <div className="flex items-center gap-3 bg-white/80 backdrop-blur-sm border border-purple-200 rounded-2xl px-4 py-3 shadow mb-4">
           <Search className="w-5 h-5 text-purple-600" />
@@ -1549,6 +1645,11 @@ export default function TrendingPage() {
         {/* 数据展示 */}
         {!loading && !error && (
           <>
+            {followError && (
+              <div className="mb-4 px-4 py-2 bg-red-100 text-red-700 rounded">
+                {followError}
+              </div>
+            )}
             {sortedEvents.length === 0 ? (
               <div className="text-center py-12">
                 <p className="text-black text-lg">暂无预测事件数据</p>
@@ -1649,7 +1750,7 @@ export default function TrendingPage() {
 
                     <p className="text-black text-sm mb-4">{product.description}</p>
 
-                    <div className="flex justify-between items-center">
+                    <div className="flex justify-between items-center mb-2">
                       <p className="text-black font-bold">
                         {product.minInvestment} 起投
                       </p>
@@ -1658,6 +1759,12 @@ export default function TrendingPage() {
                           参与事件
                         </button>
                       </Link>
+                    </div>
+                    
+                    {/* 关注数显示 */}
+                    <div className="flex items-center text-gray-500 text-sm">
+                      <Heart className="w-4 h-4 mr-1" />
+                      <span>{sortedEvents[i]?.followers_count || 0} 人关注</span>
                     </div>
                   </div>
                 </motion.div>

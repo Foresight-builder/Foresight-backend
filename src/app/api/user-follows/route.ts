@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { getUserFollows, getFollowersCount } from '@/lib/localFollowStore'
 
 function isMissingRelation(error?: { message?: string }) {
   if (!error?.message) return false
@@ -18,7 +17,7 @@ function isUserIdTypeIntegerError(error?: { message?: string }) {
   return msg.includes('out of range for type integer') || msg.includes('invalid input syntax for type integer')
 }
 
-const enableFallback = process.env.ENABLE_LOCAL_FOLLOW_FALLBACK === 'true'
+// 移除本地降级逻辑，强制仅使用 Supabase
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,21 +31,22 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // 获取用户关注的事件ID列表（优先Supabase，失败时降级本地存储）
+    // 获取用户关注的事件ID列表（仅 Supabase）
     const { data: followedEventIds, error: followsError } = await supabaseAdmin
       .from('event_follows')
       .select('event_id')
       .eq('user_id', address)
-
-    let eventIds: number[] = []
+    
     if (followsError) {
-      const localRecords = await getUserFollows(address)
-      eventIds = localRecords.map(r => r.event_id)
-    } else {
-      if (!followedEventIds || followedEventIds.length === 0) {
-        return NextResponse.json({ follows: [], total: 0 })
-      }
-      eventIds = followedEventIds.map(follow => follow.event_id)
+      return NextResponse.json(
+        { error: '获取关注事件ID失败' },
+        { status: 500 }
+      )
+    }
+
+    const eventIds: number[] = (followedEventIds || []).map(follow => follow.event_id)
+    if (!eventIds.length) {
+      return NextResponse.json({ follows: [], total: 0 })
     }
 
     // 获取事件详细信息
@@ -73,19 +73,14 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // 获取每个事件的关注数（Supabase不可用时降级到本地存储）
+    // 获取每个事件的关注数（仅 Supabase；出现错误时该事件计数置为 0）
     const eventsWithFollowersCount = await Promise.all(
       (eventsData || []).map(async (event) => {
         const { count, error: countError } = await supabaseAdmin
           .from('event_follows')
           .select('id', { count: 'exact', head: true })
           .eq('event_id', event.id)
-
-        let followers = count || 0
-        if (countError) {
-          followers = await getFollowersCount(event.id)
-        }
-
+        const followers = countError ? 0 : (count || 0)
         return {
           ...event,
           followers_count: followers

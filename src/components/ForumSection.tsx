@@ -98,7 +98,7 @@ export default function ForumSection({ eventId }: ForumSectionProps) {
       if (!byParent[key]) byParent[key] = []
       byParent[key].push(c)
     })
-    const renderBranch = (parentId: number | null, depth = 0): JSX.Element[] => {
+    const renderBranch = (parentId: number | null, depth = 0) => {
       const key = String(parentId ?? 'root')
       const nodes = byParent[key] || []
       return nodes.flatMap(node => [

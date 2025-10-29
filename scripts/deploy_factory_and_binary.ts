@@ -95,7 +95,7 @@ async function main() {
 
   // Parse event
   const iface = mf.interface;
-  const log = receipt.logs.find((l) => {
+  const log = receipt.logs.find((l: any) => {
     try {
       const desc = iface.parseLog(l) as any;
       return desc?.name === "MarketCreated";

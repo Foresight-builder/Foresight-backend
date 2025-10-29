@@ -7,6 +7,7 @@ import { ChevronLeft, Loader2, ArrowUp } from 'lucide-react';
 import { ethers } from 'ethers';
 import { useWallet } from '@/contexts/WalletContext'
 import { getFollowStatus, toggleFollowPrediction } from '@/lib/follows'
+import { supabase } from '@/lib/supabase'
 import ChatPanel from '@/components/ChatPanel'
 import ForumSection from '@/components/ForumSection'
 
@@ -120,16 +121,72 @@ export default function PredictionDetailPage() {
       if (!params.id) return;
       
       try {
-        const status = await getFollowStatus(Number(params.id), account || undefined);
-        setFollowing(!!status.following);
-        setFollowersCount(status.followersCount);
+        setFollowError(null);
+        // 添加错误处理和重试逻辑
+        let retries = 3;
+        let status;
+        
+        while (retries > 0) {
+          try {
+            status = await getFollowStatus(Number(params.id), account || undefined);
+            break;
+          } catch (err) {
+            console.warn(`获取关注状态尝试失败，剩余重试次数: ${retries-1}`, err);
+            retries--;
+            if (retries === 0) throw err;
+            await new Promise(r => setTimeout(r, 500)); // 重试前等待500ms
+          }
+        }
+        
+        if (status) {
+          setFollowing(!!status.following);
+          setFollowersCount(status.followersCount);
+        }
       } catch (error) {
         console.error('获取关注状态失败:', error);
         setFollowError('获取关注状态失败');
+        // 设置默认值，避免UI显示错误
+        setFollowing(false);
+        setFollowersCount(0);
       }
     };
 
     fetchFollowStatus();
+  }, [params.id, account]);
+
+  // Supabase Realtime 订阅：针对当前预测事件的关注插入/删除，实时更新 followersCount 与 following
+  useEffect(() => {
+    const eid = Number(params.id);
+    if (!Number.isFinite(eid)) return;
+
+    const filterEq = `event_id=eq.${eid}`;
+    const channel = supabase.channel(`event_follows_detail_${eid}`);
+
+    channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_follows', filter: filterEq }, (payload: any) => {
+        const uid = String((payload?.new || {}).user_id || '');
+        // 非当前用户的插入，计数 +1；当前用户则同步 following 状态（避免与本地乐观重复叠加）
+        if (!account || uid !== account) {
+          setFollowersCount(c => c + 1);
+        }
+        if (account && uid === account) {
+          setFollowing(true);
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'event_follows', filter: filterEq }, (payload: any) => {
+        const uid = String((payload?.old || {}).user_id || '');
+        if (!account || uid !== account) {
+          setFollowersCount(c => Math.max(0, c - 1));
+        }
+        if (account && uid === account) {
+          setFollowing(false);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [params.id, account]);
 
   // 处理关注/取消关注

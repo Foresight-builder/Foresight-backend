@@ -31,7 +31,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (do not commit secrets)
 .env*
 
 # vercel
@@ -45,6 +45,12 @@ next-env.d.ts
 /.history/
 /Foresight-frontend.git/
 
-# local data files
-/.data/
+# Local data files
+.data/
 *.db
+
+# Large binary files and git backups
+*.node
+*.pack
+.git-backup/
+.next-swc/

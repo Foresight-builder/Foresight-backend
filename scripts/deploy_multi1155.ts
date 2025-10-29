@@ -100,28 +100,36 @@ async function main() {
 
   // Parse MarketCreated
   const iface = mf.interface;
-  const log = receipt.logs.find(l => {
-    try { return iface.parseLog(l).name === "MarketCreated"; } catch (_) { return false; }
+  const log = receipt.logs.find((l: any) => {
+    try { 
+      const parsedLog = iface.parseLog(l);
+      return parsedLog && parsedLog.name === "MarketCreated"; 
+    } catch (_) { return false; }
   });
   if (log) {
     const parsed = iface.parseLog(log);
-    console.log("MarketCreated (MULTI):", {
-      marketId: parsed.args[0].toString(),
-      market: parsed.args[1],
-      templateId: parsed.args[2],
-      creator: parsed.args[3],
-      collateralToken: parsed.args[4],
-      oracle: parsed.args[5],
-      feeBps: parsed.args[6].toString(),
-      resolutionTime: parsed.args[7].toString()
-    });
+    if (parsed) {
+      console.log("MarketCreated (MULTI):", {
+        marketId: parsed.args[0].toString(),
+        market: parsed.args[1],
+        templateId: parsed.args[2],
+        creator: parsed.args[3],
+        collateralToken: parsed.args[4],
+        oracle: parsed.args[5],
+        feeBps: parsed.args[6].toString(),
+        resolutionTime: parsed.args[7].toString()
+      });
+    }
   } else {
     console.log("Multi market created. Tx:", receipt.hash);
   }
 
   // Grant MINTER_ROLE on OutcomeToken1155 to created market
   // We need the market address from event above
-  const createdMarket = log ? ((): any => { const p = iface.parseLog(log); return p.args.market ?? p.args[1]; })() : undefined;
+  const createdMarket = log ? ((): any => { 
+    const p = iface.parseLog(log); 
+    return p ? (p.args.market ?? p.args[1]) : undefined; 
+  })() : undefined;
   if (createdMarket) {
     const MINTER_ROLE = await outcome1155.MINTER_ROLE();
     const hasRole = await outcome1155.hasRole(MINTER_ROLE, createdMarket);
