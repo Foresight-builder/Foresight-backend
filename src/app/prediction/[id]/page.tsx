@@ -7,6 +7,7 @@ import { ChevronLeft, Loader2, ArrowUp } from 'lucide-react';
 import { ethers } from 'ethers';
 import { useWallet } from '@/contexts/WalletContext'
 import { getFollowStatus, toggleFollowPrediction } from '@/lib/follows'
+import { supabase } from '@/lib/supabase'
 import ChatPanel from '@/components/ChatPanel'
 import ForumSection from '@/components/ForumSection'
 
@@ -151,6 +152,41 @@ export default function PredictionDetailPage() {
     };
 
     fetchFollowStatus();
+  }, [params.id, account]);
+
+  // Supabase Realtime 订阅：针对当前预测事件的关注插入/删除，实时更新 followersCount 与 following
+  useEffect(() => {
+    const eid = Number(params.id);
+    if (!Number.isFinite(eid)) return;
+
+    const filterEq = `event_id=eq.${eid}`;
+    const channel = supabase.channel(`event_follows_detail_${eid}`);
+
+    channel
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_follows', filter: filterEq }, (payload: any) => {
+        const uid = String((payload?.new || {}).user_id || '');
+        // 非当前用户的插入，计数 +1；当前用户则同步 following 状态（避免与本地乐观重复叠加）
+        if (!account || uid !== account) {
+          setFollowersCount(c => c + 1);
+        }
+        if (account && uid === account) {
+          setFollowing(true);
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'event_follows', filter: filterEq }, (payload: any) => {
+        const uid = String((payload?.old || {}).user_id || '');
+        if (!account || uid !== account) {
+          setFollowersCount(c => Math.max(0, c - 1));
+        }
+        if (account && uid === account) {
+          setFollowing(false);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [params.id, account]);
 
   // 处理关注/取消关注

@@ -1,7 +1,6 @@
 // 预测事件详情API路由 - 处理单个预测事件的GET请求
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin, type Prediction } from '@/lib/supabase';
-import { mockPredictions } from '@/lib/data';
 
 export async function GET(
   request: NextRequest,
@@ -28,51 +27,12 @@ export async function GET(
       .single();
 
     if (error) {
-      // 尝试使用本地模拟数据降级
-      const mock = mockPredictions.find(p => Number(p.id) === predictionId);
-      if (mock) {
-        const predictionDetail = {
-          id: Number(mock.id),
-          title: mock.title,
-          description: mock.description,
-          category: mock.category,
-          deadline: mock.deadline,
-          minStake: mock.minStake,
-          criteria: mock.criteria,
-          referenceUrl: mock.referenceUrl || '',
-          status: mock.status,
-          createdAt: mock.createdAt,
-          updatedAt: mock.updatedAt,
-          stats: {
-            yesAmount: 0,
-            noAmount: 0,
-            totalAmount: 0,
-            participantCount: 0,
-            yesProbability: 0.5,
-            noProbability: 0.5,
-            betCount: 0
-          },
-          timeInfo: {
-            createdAgo: getTimeAgo(mock.createdAt),
-            deadlineIn: getTimeRemaining(mock.deadline),
-            isExpired: new Date(mock.deadline) < new Date()
-          }
-        };
-        return NextResponse.json({
-          success: true,
-          data: predictionDetail,
-          message: '获取预测事件详情成功(降级)'
-        });
-      }
-
-      if (error.code === 'PGRST116') {
-        // Supabase不存在且本地也无匹配则返回404
+      if ((error as any)?.code === 'PGRST116') {
         return NextResponse.json(
           { success: false, message: '预测事件不存在' },
           { status: 404 }
         );
       }
-
       console.error('获取预测事件详情失败:', error);
       return NextResponse.json(
         { success: false, message: '获取预测事件详情失败' },

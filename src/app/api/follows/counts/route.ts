@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { getFollowersCount } from '@/lib/localFollowStore'
 
 function isMissingRelation(error?: { message?: string }) {
   if (!error?.message) return false
@@ -18,7 +17,7 @@ function isUserIdTypeIntegerError(error?: { message?: string }) {
   return msg.includes('out of range for type integer') || msg.includes('invalid input syntax for type integer')
 }
 
-const enableFallback = process.env.ENABLE_LOCAL_FOLLOW_FALLBACK === 'true'
+// 强制使用 Supabase，仅当结构错误时返回明确的修复提示
 
 async function parseRequestBody(req: Request) {
   const contentType = req.headers.get('content-type') || ''
@@ -54,7 +53,6 @@ export async function POST(req: Request) {
     }
     const limitedIds = ids.slice(0, 50) // 简单限制一次查询数量，避免过多并发
 
-    let fallbackTriggered = false
     const entries = await Promise.all(limitedIds.map(async (id) => {
       const { count, error } = await supabaseAdmin
         .from('event_follows')
@@ -63,13 +61,7 @@ export async function POST(req: Request) {
 
       if (error) {
         if (isMissingRelation(error) || isUserIdForeignKeyViolation(error) || isUserIdTypeIntegerError(error)) {
-          if (enableFallback) {
-            fallbackTriggered = true
-            const local = await getFollowersCount(Number(id))
-            return [id, local] as const
-          } else {
-            throw { type: 'setup', error }
-          }
+          throw { type: 'setup', error }
         }
         throw { type: 'query', error }
       }
@@ -78,17 +70,6 @@ export async function POST(req: Request) {
 
     const counts: Record<number, number> = {}
     for (const [id, c] of entries) counts[Number(id)] = c
-
-    if (fallbackTriggered) {
-      return NextResponse.json({
-        counts,
-        fallbackUsed: true,
-        setupRequired: true,
-        sql: `
-ALTER TABLE public.event_follows ALTER COLUMN user_id TYPE TEXT;
-CREATE UNIQUE INDEX IF NOT EXISTS event_follows_user_id_event_id_key ON public.event_follows (user_id, event_id);`
-      }, { status: 200 })
-    }
 
     return NextResponse.json({ counts }, { status: 200 })
   } catch (e: any) {

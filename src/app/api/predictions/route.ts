@@ -1,7 +1,6 @@
 // 预测事件API路由 - 处理GET和POST请求
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase, supabaseAdmin, type Prediction } from '@/lib/supabase';
-import { mockPredictions } from '@/lib/data';
+import { supabaseAdmin, type Prediction } from '@/lib/supabase';
 
 export async function GET(request: NextRequest) {
   try {
@@ -54,45 +53,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    if (!error && predictions) {
-      return NextResponse.json({
-        success: true,
-        data: predictionsWithFollowersCount,
-        message: '获取预测事件列表成功'
-      }, {
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8'
-        }
-      });
+    if (error) {
+      console.error('获取预测事件列表失败:', error);
+      return NextResponse.json({ success: false, message: '获取预测事件列表失败' }, { status: 500 });
     }
 
-    // 降级：使用本地模拟数据
-    console.error('获取预测事件列表失败，使用本地降级数据:', error);
-    const toSupabaseShape = (p: any): Prediction => ({
-      id: Number(p.id),
-      title: p.title,
-      description: p.description,
-      category: p.category,
-      deadline: p.deadline,
-      min_stake: p.minStake,
-      criteria: p.criteria,
-      reference_url: p.referenceUrl || '',
-      image_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(p.title)}&size=400&backgroundColor=b6e3f4,c0aede,d1d4f9&radius=20`,
-      status: p.status,
-      created_at: p.createdAt,
-      updated_at: p.updatedAt
-    });
-
-    let fallback = [...mockPredictions];
-    if (category) fallback = fallback.filter(p => p.category === category);
-    if (status) fallback = fallback.filter(p => p.status === status);
-    if (limit) fallback = fallback.slice(0, parseInt(limit));
-
-    const mapped = fallback.map(toSupabaseShape);
     return NextResponse.json({
       success: true,
-      data: mapped,
-      message: '获取预测事件列表成功(降级)'
+      data: predictionsWithFollowersCount,
+      message: '获取预测事件列表成功'
     }, {
       headers: {
         'Content-Type': 'application/json; charset=utf-8'
@@ -100,35 +69,8 @@ export async function GET(request: NextRequest) {
     });
     
   } catch (error) {
-    console.error('获取预测事件列表失败:', error);
-    // 全局异常时也返回降级数据
-    let fallback = [...mockPredictions];
-    const { searchParams } = new URL(request.url);
-    const category = searchParams.get('category');
-    const status = searchParams.get('status');
-    const limit = searchParams.get('limit');
-    if (category) fallback = fallback.filter(p => p.category === category);
-    if (status) fallback = fallback.filter(p => p.status === status);
-    if (limit) fallback = fallback.slice(0, parseInt(limit));
-    const mapped = fallback.map(p => ({
-      id: Number(p.id),
-      title: p.title,
-      description: p.description,
-      category: p.category,
-      deadline: p.deadline,
-      min_stake: p.minStake,
-      criteria: p.criteria,
-      reference_url: p.referenceUrl || '',
-      image_url: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(p.title)}&size=400&backgroundColor=b6e3f4,c0aede,d1d4f9&radius=20`,
-      status: p.status,
-      created_at: p.createdAt,
-      updated_at: p.updatedAt
-    } as Prediction));
-    return NextResponse.json({
-      success: true,
-      data: mapped,
-      message: '获取预测事件列表成功(降级)'
-    }, { status: 200 });
+    console.error('获取预测事件列表异常:', error);
+    return NextResponse.json({ success: false, message: '获取预测事件列表失败' }, { status: 500 });
   }
 }
 

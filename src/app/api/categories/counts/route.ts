@@ -1,7 +1,6 @@
 // 分类热点数量API路由 - 获取每个分类的预测事件数量
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
-import { mockPredictions } from '@/lib/data';
 
 export async function GET() {
   try {
@@ -50,21 +49,7 @@ export async function GET() {
     });
     
   } catch (error) {
-    // 错误时降级：使用本地模拟数据计算分类数量
-    console.error('获取分类热点数量失败，使用本地降级数据:', error);
-    const countsByCategory: Record<string, number> = {};
-    for (const p of mockPredictions) {
-      countsByCategory[p.category] = (countsByCategory[p.category] || 0) + 1;
-    }
-    const fallback = Object.entries(countsByCategory).map(([category, count]) => ({ category, count }));
-    return NextResponse.json({
-      success: true,
-      data: fallback,
-      message: '获取分类热点数量成功(降级)'
-    }, {
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8'
-      }
-    });
+    console.error('获取分类热点数量失败:', error);
+    return NextResponse.json({ success: false, message: '获取分类热点数量失败' }, { status: 500 });
   }
 }

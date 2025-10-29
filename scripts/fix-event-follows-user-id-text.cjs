@@ -19,8 +19,9 @@ let connectionString =
 
 // 如果未配置环境变量，使用项目中已验证可用的连接字符串回退
 if (!connectionString) {
+  // 尝试使用通用的 Supabase pooled 连接形式：用户名通常为 postgres
   connectionString =
-    'postgresql://postgres.qhllkgbddesrbhvjzfud:Foresight2024!@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres'
+    'postgresql://postgres:Foresight2024!@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres'
 }
 
 // 允许使用上述回退连接字符串
@@ -54,25 +55,24 @@ async function main() {
       }
     }
 
-    // 验证：尝试插入一条包含文本 user_id 的记录（随后回滚删除）
-    console.log('验证：插入/删除测试记录')
-    const testUser = '0xTESTWALLET_VALIDATE_TYPE'
-    const testEvent = 999999
-    await client.query('BEGIN')
-    await client.query(
-      'INSERT INTO public.event_follows (user_id, event_id) VALUES ($1, $2) ON CONFLICT (user_id, event_id) DO NOTHING',
-      [testUser, testEvent]
+    // 验证结构：检查 user_id 列类型为 text 且唯一索引存在
+    console.log('验证：检查列类型与唯一索引存在')
+    const { rows: colRows } = await client.query(
+      `SELECT data_type FROM information_schema.columns 
+       WHERE table_schema='public' AND table_name='event_follows' AND column_name='user_id'`
     )
-    const { rows } = await client.query(
-      'SELECT user_id::text AS user_id, event_id FROM public.event_follows WHERE user_id = $1 AND event_id = $2 LIMIT 1',
-      [testUser, testEvent]
-    )
-    if (!rows?.length || typeof rows[0]?.user_id !== 'string') {
-      throw new Error('验证失败：user_id 不是 TEXT 或插入记录失败')
+    const dtype = (colRows?.[0]?.data_type || '').toLowerCase()
+    if (dtype !== 'text') {
+      throw new Error(`验证失败：user_id 列类型为 ${dtype}，应为 text`)
     }
-    // 清理测试数据
-    await client.query('ROLLBACK')
-    console.log('验证通过：user_id 为 TEXT 类型')
+    const { rows: idxRows } = await client.query(
+      `SELECT indexname FROM pg_indexes 
+       WHERE schemaname='public' AND tablename='event_follows' AND indexname='event_follows_user_id_event_id_key'`
+    )
+    if (!idxRows?.length) {
+      throw new Error('验证失败：缺少唯一索引 event_follows_user_id_event_id_key')
+    }
+    console.log('验证通过：user_id 为 TEXT 且唯一索引存在')
 
     console.log('所有操作完成')
   } finally {
