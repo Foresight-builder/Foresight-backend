@@ -120,12 +120,33 @@ export default function PredictionDetailPage() {
       if (!params.id) return;
       
       try {
-        const status = await getFollowStatus(Number(params.id), account || undefined);
-        setFollowing(!!status.following);
-        setFollowersCount(status.followersCount);
+        setFollowError(null);
+        // 添加错误处理和重试逻辑
+        let retries = 3;
+        let status;
+        
+        while (retries > 0) {
+          try {
+            status = await getFollowStatus(Number(params.id), account || undefined);
+            break;
+          } catch (err) {
+            console.warn(`获取关注状态尝试失败，剩余重试次数: ${retries-1}`, err);
+            retries--;
+            if (retries === 0) throw err;
+            await new Promise(r => setTimeout(r, 500)); // 重试前等待500ms
+          }
+        }
+        
+        if (status) {
+          setFollowing(!!status.following);
+          setFollowersCount(status.followersCount);
+        }
       } catch (error) {
         console.error('获取关注状态失败:', error);
         setFollowError('获取关注状态失败');
+        // 设置默认值，避免UI显示错误
+        setFollowing(false);
+        setFollowersCount(0);
       }
     };
 

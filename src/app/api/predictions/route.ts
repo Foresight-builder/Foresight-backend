@@ -34,11 +34,30 @@ export async function GET(request: NextRequest) {
     }
     
     const { data: predictions, error } = await query;
+    
+    // 获取每个预测的关注数量
+    let predictionsWithFollowersCount = [];
+    if (!error && predictions) {
+      predictionsWithFollowersCount = await Promise.all(
+        predictions.map(async (prediction) => {
+          // 获取关注数量
+          const { count, error: countError } = await supabaseAdmin
+            .from('event_follows')
+            .select('*', { count: 'exact', head: true })
+            .eq('event_id', prediction.id);
+          
+          return {
+            ...prediction,
+            followers_count: count || 0
+          };
+        })
+      );
+    }
 
     if (!error && predictions) {
       return NextResponse.json({
         success: true,
-        data: predictions,
+        data: predictionsWithFollowersCount,
         message: '获取预测事件列表成功'
       }, {
         headers: {
